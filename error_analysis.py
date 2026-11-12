@@ -53,14 +53,18 @@ def fix_markdown_format(text):
     return text
 
 def analyze_with_stream(b64_data, status_text, result_placeholder):
-    # 恢复正常、专业的 Prompt
+    # 升级版的 Prompt：支持全学科与复杂大题自适应
     prompt = """
-你是严谨的高数批改助手。你可以看图读取学生手写解题步骤，请严格遵守以下规则：
+你是极其严谨的高数及全学科批改助手。你可以看图读取学生的解题步骤，请严格遵守以下规则：
 
 【排版与格式】
 1. 所有变量只能用英文字母，禁止用汉字代替。
 2. 积分末尾请统一使用小写 `dx`、`dt`。
 3. 【正确推导】必须分步骤书写。所有的独立公式必须用 `$$` 独立成行包裹；行内公式用 `$` 包裹。
+
+【自适应输出规则（重要）】
+- 如果题目很简单，请直接给出简洁的推导和结论。
+- 如果题目包含多个小问，或者推导极其复杂，请务必详细展开，不要遗漏任何小问，必要时加上文字解释。
 
 【判断与输出结构】
 先判断学生的最终结果和核心逻辑是否正确（允许学生使用化简或跳过步骤，只要逻辑正确就不要强行找错）。
@@ -81,7 +85,7 @@ def analyze_with_stream(b64_data, status_text, result_placeholder):
                 ]
             }
         ],
-        "max_tokens": 800,
+        "max_tokens": 2048,  # 👈 这里已经帮你改成了 2048，防止大题被截断
         "stream": True,
     }
     headers = {
@@ -90,6 +94,7 @@ def analyze_with_stream(b64_data, status_text, result_placeholder):
     }
 
     full_text = ""
+    finish_reason = None # 👈 用于检测是否被字数限制截断
     try:
         res = SESSION.post(
             MODEL_URL,
@@ -113,7 +118,10 @@ def analyze_with_stream(b64_data, status_text, result_placeholder):
             if chunk == "[DONE]":
                 break
             try:
-                delta = json.loads(chunk)["choices"][0]["delta"]
+                data = json.loads(chunk)
+                delta = data["choices"][0]["delta"]
+                finish_reason = data["choices"][0].get("finish_reason") # 👈 记录结束原因
+                
                 content = delta.get("content")
                 if content:
                     full_text += content
@@ -129,6 +137,10 @@ def analyze_with_stream(b64_data, status_text, result_placeholder):
         result_placeholder.empty()
         result_placeholder.markdown(final_text)
         
+        # 👈 如果因为字数限制被截断了，给用户一个提示
+        if finish_reason == "length":
+            st.warning("⚠️ 注意：这道题非常复杂，模型输出达到了长度上限，后半部分可能被截断。建议分次拍照上传。")
+            
         return final_text
 
     except requests.exceptions.ConnectTimeout:
@@ -141,8 +153,8 @@ def analyze_with_stream(b64_data, status_text, result_placeholder):
 
 
 # ================= 页面 UI =================
-st.title("高数错题识别与归因分析")
-upload_file = st.file_uploader("上传高数错题照片", type=["png", "jpg", "jpeg"])
+st.title("全学科错题识别与归因分析") # 👈 顺手把标题也改成全学科了
+upload_file = st.file_uploader("上传错题照片", type=["png", "jpg", "jpeg"])
 
 if upload_file is not None:
     st.image(upload_file, caption="上传的错题", width="stretch")
